@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<!--
+===== قواعد Firestore: كوبيها فـ Firebase ← Firestore ← Rules ← Publish =====
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signed() { return request.auth != null; }
+    function isAdmin() { return signed() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+
+    match /ads/{id} {
+      allow read: if resource.data.status == 'published'
+                  || (signed() && resource.data.owner == request.auth.uid)
+                  || isAdmin();
+      allow create: if signed()
+                    && request.resource.data.owner == request.auth.uid
+                    && request.resource.data.status == 'pending';
+      allow update: if isAdmin()
+                    || (signed() && resource.data.owner == request.auth.uid
+                        && request.resource.data.owner == resource.data.owner
+                        && request.resource.data.status in ['pending', 'sold']);
+      allow delete: if signed() && (resource.data.owner == request.auth.uid || isAdmin());
+    }
+    match /reports/{id} {
+      allow create: if signed();
+      allow read, delete: if isAdmin();
+    }
+    match /users/{uid}/favs/{adId} {
+      allow read, write: if signed() && request.auth.uid == uid;
+    }
+    match /admins/{uid} {
+      allow read: if signed() && request.auth.uid == uid;
+    }
+  }
+}
+
+-->
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>سوق الدواجن | Souk Dawa Jen</title>
+<meta name="description" content="منصة مغربية لبيع وشراء الدواجن والبيض والفقاسات ومستلزمات التربية">
+<meta name="theme-color" content="#1f4d36">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E🐓%3C/text%3E%3C/svg%3E">
+<style>
+:root{--bg:#f6f1e4;--card:#fff;--tx:#1d2b22;--mut:#6b7a70;--g:#1f4d36;--g2:#2d6a4b;--gold:#c9a24a;--bd:#e3dac3}
+@media(prefers-color-scheme:dark){:root{--bg:#141b17;--card:#1d2822;--tx:#eef2ea;--mut:#9fb0a5;--bd:#2d3b33;--g:#2f7a56;--g2:#4aa376}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:"Segoe UI",Tahoma,"Noto Naskh Arabic",Arial,sans-serif;line-height:1.6;max-width:900px;margin-inline:auto;padding-bottom:env(safe-area-inset-bottom,0)}
+header{background:var(--g);color:#fff;padding:calc(12px + env(safe-area-inset-top,0)) 16px 12px;position:sticky;top:0;z-index:5}
+header h1{margin:0;font-size:20px}header small{color:var(--gold)}
+.top{display:flex;justify-content:space-between;align-items:center}
+.top button{background:none;border:1px solid rgba(255,255,255,.4);color:#fff;border-radius:16px;padding:4px 12px;font:inherit;font-size:13px}
+nav{display:flex;gap:6px;margin-top:10px;overflow-x:auto}
+nav button{flex:none;background:rgba(255,255,255,.12);color:#fff;border:0;border-radius:20px;padding:8px 14px;font:inherit;font-size:14px}
+nav button.on{background:var(--gold);color:#1d2b22;font-weight:700}
+main{padding:14px}
+input,select,textarea{width:100%;padding:11px;border:1px solid var(--bd);border-radius:10px;background:var(--card);color:var(--tx);font:inherit;margin-bottom:8px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.btn{background:var(--g);color:#fff;border:0;border-radius:10px;padding:11px 16px;font:inherit;font-weight:700;width:100%;cursor:pointer}
+.btn.s{width:auto;padding:7px 12px;font-size:13px}.btn.w{background:#25a244}.btn.r{background:#b3402f}.btn.o{background:transparent;color:var(--g2);border:1px solid var(--g2)}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:10px}
+.card h3{margin:0 0 4px;font-size:17px}.p{color:var(--g2);font-weight:800;font-size:18px}
+.tag{display:inline-block;background:var(--bd);border-radius:12px;padding:1px 10px;font-size:12px;margin-inline-end:4px}
+.mut{color:var(--mut);font-size:13px}.acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.imgs{display:flex;gap:6px;overflow-x:auto;margin-bottom:8px}.imgs img{height:140px;border-radius:10px;flex:none}
+.empty{text-align:center;color:var(--mut);padding:40px 10px}
+.note{background:#fff8e1;color:#5a4a10;border:1px solid var(--gold);border-radius:10px;padding:10px;font-size:13px;margin-bottom:10px}
+#toast{position:fixed;bottom:calc(16px + env(safe-area-inset-bottom,0));left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:10px 18px;border-radius:20px;display:none;z-index:9}
+</style>
+</head>
+<body>
+<header><div class="top"><h1>🐓 سوق الدواجن <small>Souk Dawa Jen</small></h1><button id="who" onclick="go('auth')">دخول</button></div><nav id="nav"></nav></header>
+<main id="app"><div class="empty">جارٍ التحميل…</div></main>
+<div id="toast"></div>
+
+<script type="module">
+/* ============ 1) لصق إعدادات Firebase ديالك هنا ============ */
+const firebaseConfig = {
+  apiKey: "AIzaSyB8X5Yb3fBGH286lXSYpA9fl9Scz3e4OU0",
+  authDomain: "fouqasat-market.firebaseapp.com",
+  projectId: "fouqasat-market",
+  appId: "1:1013920071604:web:a125d302ab987329f73ce1"
+};
+/* ============================================================ */
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,createUserWithEmailAndPassword,sendPasswordResetEmail,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {getFirestore,collection,doc,setDoc,updateDoc,deleteDoc,getDoc,query,where,onSnapshot} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const CATS=["الفقاسات وآلاتها","مستلزمات التربية","البيض المخصب للتفقيس","البيض البلدي (استهلاك)","الكتاكيت وصغار الدجاج","الدجاج (بلدي/لحم/بياض)","البط وصغاره","أخرى"];
+const CITIES=["أكادير","الدار البيضاء","الرباط","مراكش","فاس","طنجة","مكناس","وجدة","تطوان","القنيطرة","تارودانت","العيون","أخرى"];
+const ST={pending:"قيد المراجعة",published:"منشور",rejected:"مرفوض",sold:"مباع/غير متوفر"};
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const toast=m=>{const t=$("#toast");t.textContent=m;t.style.display="block";setTimeout(()=>t.style.display="none",2800)};
+const opts=(a,sel,ph)=>(ph?`<option value="">${ph}</option>`:"")+a.map(x=>`<option ${x===sel?"selected":""}>${x}</option>`).join("");
+const phoneIntl=p=>{p=String(p).replace(/\D/g,"");if(p.startsWith("00"))p=p.slice(2);if(p.startsWith("0"))p="212"+p.slice(1);return p};
+const wa=a=>"https://wa.me/"+phoneIntl(a.phone)+"?text="+encodeURIComponent(`السلام عليكم، مهتم بإعلانكم في سوق الدواجن: ${a.title} (${a.price} درهم)`);
+
+let app,auth,db,me=null,isAdmin=false,view="home",pub=[],mine=[],pend=[],reports=[],favs=new Set(),unsubs=[];
+let f={q:"",cat:"",city:"",sort:"new",avail:true};
+
+try{app=initializeApp(firebaseConfig);auth=getAuth(app);db=getFirestore(app)}catch(e){}
+if(!db||firebaseConfig.apiKey.startsWith("PASTE")){$("#app").innerHTML='<div class="note">⚠️ لصق إعدادات Firebase فبداية ملف index.html (القسم 1).</div>'}
+else{
+  onSnapshot(query(collection(db,"ads"),where("status","==","published")),s=>{pub=s.docs.map(d=>({id:d.id,...d.data()}));render()},e=>console.error(e));
+  onAuthStateChanged(auth,async u=>{
+    unsubs.forEach(x=>x());unsubs=[];me=u;isAdmin=false;mine=[];pend=[];reports=[];favs=new Set();
+    if(u){
+      try{isAdmin=(await getDoc(doc(db,"admins",u.uid))).exists()}catch(e){}
+      unsubs.push(onSnapshot(query(collection(db,"ads"),where("owner","==",u.uid)),s=>{mine=s.docs.map(d=>({id:d.id,...d.data()}));render()}));
+      unsubs.push(onSnapshot(collection(db,"users",u.uid,"favs"),s=>{favs=new Set(s.docs.map(d=>d.id));render()}));
+      if(isAdmin){
+        unsubs.push(onSnapshot(query(collection(db,"ads"),where("status","==","pending")),s=>{pend=s.docs.map(d=>({id:d.id,...d.data()}));render()}));
+        unsubs.push(onSnapshot(collection(db,"reports"),s=>{reports=s.docs.map(d=>({id:d.id,...d.data()}));render()}));
+      }
+      if(view==="auth")view="home";
+    }
+    render();
+  });
+}
+const byNew=(a,b)=>(b.ts||0)-(a.ts||0);
+window.go=v=>{view=v;render();scrollTo(0,0)};
+window.f=f;window.render=()=>render();
+
+function render(){
+  if(!db||firebaseConfig.apiKey.startsWith("PASTE"))return;
+  $("#who").textContent=me?"خروج":"دخول";
+  $("#who").onclick=()=>me?signOut(auth):go("auth");
+  const tabs=[["home","🏠 الرئيسية"],["add","➕ إضافة إعلان"],["mine","📋 إعلاناتي"],["favs","❤️ المفضلة"],["about","ℹ️ عن المنصة"]];
+  if(isAdmin)tabs.push(["admin","🛡️ الإدارة"]);
+  $("#nav").innerHTML=tabs.map(([k,l])=>`<button class="${view===k?"on":""}" onclick="go('${k}')">${l}</button>`).join("");
+  const needAuth=["add","mine","favs","admin"].includes(view)&&!me;
+  const A=$("#app");
+  if(view==="auth"||needAuth)A.innerHTML=authForm(needAuth);
+  else if(view==="home")A.innerHTML=home();
+  else if(view==="add")A.innerHTML=addForm();
+  else if(view==="mine")A.innerHTML=list(mine.slice().sort(byNew),"mine","ما عندك حتى إعلان بعد.");
+  else if(view==="favs")A.innerHTML=list(pub.filter(a=>favs.has(a.id)).sort(byNew),"pub","ما عندك حتى إعلان فالمفضلة.");
+  else if(view==="admin")A.innerHTML=admin();
+  else A.innerHTML=about();
+}
+function authForm(need){return`${need?'<div class="note">خاصك تسجل الدخول باش تكمل.</div>':""}
+<div class="card"><h3>تسجيل الدخول / حساب جديد</h3><input id="em" type="email" placeholder="البريد الإلكتروني" autocomplete="email"><input id="pw" type="password" placeholder="كلمة المرور (6 حروف على الأقل)" autocomplete="current-password">
+<div class="row"><button class="btn" onclick="doAuth('in')">دخول</button><button class="btn o" onclick="doAuth('up')">حساب جديد</button></div>
+<p class="mut" style="text-align:center"><a href="#" onclick="doAuth('reset');return false">نسيت كلمة المرور؟</a></p></div>`}
+window.doAuth=async m=>{
+  const e=$("#em").value.trim(),p=$("#pw").value;
+  if(!e)return toast("دخل البريد الإلكتروني");
+  try{
+    if(m==="reset"){await sendPasswordResetEmail(auth,e);return toast("تم إرسال رابط الاستعادة")}
+    if(!p)return toast("دخل كلمة المرور");
+    m==="in"?await signInWithEmailAndPassword(auth,e,p):await createUserWithEmailAndPassword(auth,e,p);
+  }catch(x){toast({"auth/invalid-credential":"البريد أو كلمة المرور غير صحيحة","auth/email-already-in-use":"البريد مستعمل من قبل","auth/weak-password":"كلمة المرور ضعيفة","auth/invalid-email":"البريد غير صحيح"}[x.code]||"وقع خطأ، عاود المحاولة")}
+};
+function home(){
+  let r=pub.slice();
+  if(f.avail)r=r.filter(a=>Number(a.qty)>0);
+  if(f.cat)r=r.filter(a=>a.cat===f.cat);if(f.city)r=r.filter(a=>a.city===f.city);
+  if(f.q){const q=f.q.toLowerCase();r=r.filter(a=>(a.title+" "+a.desc).toLowerCase().includes(q))}
+  r.sort(f.sort==="lo"?(a,b)=>a.price-b.price:f.sort==="hi"?(a,b)=>b.price-a.price:byNew);
+  return`<input placeholder="🔍 فقاسة، بيض مخصب، كتاكيت…" value="${esc(f.q)}" onchange="f.q=this.value;render()">
+  <div class="row"><select onchange="f.cat=this.value;render()">${opts(CATS,f.cat,"كل الأقسام")}</select><select onchange="f.city=this.value;render()">${opts(CITIES,f.city,"كل المدن")}</select></div>
+  <div class="row"><select onchange="f.sort=this.value;render()"><option value="new">الأحدث</option><option value="lo" ${f.sort==="lo"?"selected":""}>الأرخص</option><option value="hi" ${f.sort==="hi"?"selected":""}>الأغلى</option></select>
+  <label class="mut" style="padding:10px"><input type="checkbox" style="width:auto" ${f.avail?"checked":""} onchange="f.avail=this.checked;render()"> المتوفر فقط</label></div>
+  ${r.length?r.map(a=>card(a,"pub")).join(""):'<div class="empty">ما كاين حتى إعلان. كون أول واحد كيزيد إعلان! 🐣</div>'}`}
+function list(r,mode,msg){return r.length?r.map(a=>card(a,mode)).join(""):`<div class="empty">${msg}</div>`}
+function card(a,mode,extra=""){
+  const own=me&&a.owner===me.uid,live=a.status==="published";
+  return`<div class="card">${(a.imgs||[]).length?`<div class="imgs">${a.imgs.map(i=>`<img src="${i}" alt="">`).join("")}</div>`:""}
+  <h3>${esc(a.title)}</h3><div class="p">${esc(a.price)} درهم <span class="mut">· ${esc(a.sale)}</span></div>
+  <div style="margin:4px 0"><span class="tag">${esc(a.cat)}</span><span class="tag">📍 ${esc(a.city)}</span><span class="tag">الكمية: ${esc(a.qty)}</span>${mode!=="pub"?`<span class="tag">${ST[a.status]||esc(a.status)}</span>`:""}</div>
+  <div>${esc(a.desc)}</div><div class="mut">${a.ts?new Date(a.ts).toLocaleDateString("ar-MA"):""} · البائع: ${esc(a.sname)}</div>
+  <div class="acts">${extra}
+  ${live||isAdmin?`<a class="btn s w" style="text-decoration:none" target="_blank" rel="noopener" href="${wa(a)}">واتساب</a>`:""}
+  ${live&&me?`<button class="btn s o" onclick="fav('${a.id}')">${favs.has(a.id)?"💔 إزالة":"❤️ مفضلة"}</button>`:""}
+  ${live&&!own?`<button class="btn s o" onclick="report('${a.id}')">🚩 إبلاغ</button>`:""}
+  ${own?`<button class="btn s o" onclick="setSt('${a.id}','${a.status==="sold"?"pending":"sold"}')">${a.status==="sold"?"متوفر مجددا":"تم البيع"}</button>`:""}
+  ${own||isAdmin?`<button class="btn s r" onclick="del('${a.id}')">حذف</button>`:""}
+  </div></div>`}
+function addForm(){return`<div class="note">كل إعلان كيدوز على مراجعة الإدارة قبل النشر. رقم الهاتف كيستعمل فقط للتواصل عبر واتساب.</div>
+<input id="t" placeholder="عنوان الإعلان" maxlength="80"><textarea id="d" rows="3" placeholder="الوصف (النوع، العمر، الحالة…)" maxlength="500"></textarea>
+<div class="row"><input id="p" type="number" min="0" placeholder="الثمن (درهم)"><input id="n" type="number" min="1" placeholder="الكمية"></div>
+<div class="row"><select id="c">${opts(CATS,"")}</select><select id="ci">${opts(CITIES,"")}</select></div>
+<div class="row"><select id="s"><option>بالقطعة</option><option>بالجملة</option></select><input id="sn" placeholder="اسمك أو الاسم التجاري" maxlength="40"></div>
+<input id="ph" type="tel" placeholder="رقم واتساب (مثال: 0612345678)">
+<label class="mut">📷 صور (حتى 3)</label><input id="im" type="file" accept="image/*" multiple>
+<button class="btn" id="go" onclick="addAd()">نشر الإعلان</button>`}
+function resize(file){return new Promise(res=>{const r=new FileReader();r.onload=()=>{const i=new Image();i.onload=()=>{const k=Math.min(1,700/i.width),c=document.createElement("canvas");c.width=i.width*k;c.height=i.height*k;c.getContext("2d").drawImage(i,0,0,c.width,c.height);res(c.toDataURL("image/jpeg",.68))};i.src=r.result};r.readAsDataURL(file)})}
+window.addAd=async()=>{
+  const g=i=>$("#"+i).value.trim();
+  const ad={title:g("t"),desc:g("d"),price:Number(g("p")),qty:Number(g("n")),cat:g("c"),city:g("ci"),sale:g("s"),sname:g("sn"),phone:g("ph"),owner:me.uid,status:"pending",ts:Date.now()};
+  const ph=phoneIntl(ad.phone);
+  if(!ad.title||!ad.desc||!(ad.price>=0)||!(ad.qty>0)||!ad.sname)return toast("عمر جميع الخانات من فضلك");
+  if(ph.length<11||ph.length>13)return toast("رقم الهاتف غير صحيح");
+  $("#go").disabled=true;
+  try{
+    ad.imgs=await Promise.all([...$("#im").files].slice(0,3).map(resize));
+    await setDoc(doc(collection(db,"ads")),ad);toast("تم الإرسال للمراجعة ✅");go("mine");
+  }catch(e){toast("وقع خطأ، عاود المحاولة");$("#go").disabled=false}
+};
+window.fav=async id=>{const r=doc(db,"users",me.uid,"favs",id);try{favs.has(id)?await deleteDoc(r):await setDoc(r,{t:Date.now()})}catch(e){toast("خطأ")}};
+window.setSt=async(id,s)=>{try{await updateDoc(doc(db,"ads",id),{status:s});toast("تم")}catch(e){toast("خطأ")}};
+window.del=async id=>{if(!confirm("حذف الإعلان نهائيا؟"))return;try{await deleteDoc(doc(db,"ads",id))}catch(e){toast("خطأ")}};
+window.report=async id=>{
+  if(!me)return go("auth");
+  const why=prompt("سبب الإبلاغ؟ (احتيال، إعلان مضلل، ممنوع…)");if(!why)return;
+  try{await setDoc(doc(collection(db,"reports")),{ad:id,why:why.slice(0,200),by:me.uid,ts:Date.now()});toast("شكرا، توصلنا بالبلاغ")}catch(e){toast("خطأ")}
+};
+window.dr=async id=>{try{await deleteDoc(doc(db,"reports",id))}catch(e){toast("خطأ")}};
+function admin(){
+  const btns=a=>`<button class="btn s" onclick="setSt('${a.id}','published')">✅ قبول</button><button class="btn s r" onclick="setSt('${a.id}','rejected')">رفض</button>`;
+  return`<h3>إعلانات قيد المراجعة (${pend.length})</h3>${pend.length?pend.sort(byNew).map(a=>card(a,"mine",btns(a))).join(""):'<div class="empty">ما كاين والو للمراجعة.</div>'}
+  <h3>البلاغات (${reports.length})</h3>${reports.map(r=>`<div class="card"><div>${esc(r.why)}</div><div class="mut">إعلان: ${esc(r.ad)}</div><div class="acts"><button class="btn s r" onclick="setSt('${esc(r.ad)}','rejected')">إيقاف الإعلان</button><button class="btn s o" onclick="dr('${r.id}')">تجاهل</button></div></div>`).join("")||'<div class="empty">لا توجد بلاغات.</div>'}
+  <div class="mut">منشور حاليا: ${pub.length} إعلان</div>`}
+function about(){return`<div class="card"><h3>عن المنصة</h3><p>سوق الدواجن وسيط بين البائعين والمشترين؛ لا نبيع المنتجات بأنفسنا ولا نضمنها. تأكد من حالة المنتج قبل الشراء.</p>
+<p>⚠️ البيض المخصب للتفقيس مختلف عن بيض الاستهلاك. بيع ونقل الحيوانات والبيض خاضع للشروط القانونية والبيطرية المغربية.</p><p class="mut">النسخة التجريبية (MVP) — الإعلانات مجانية.</p></div>
+<div class="card"><h3>اتصل بنا · الشروط · الخصوصية</h3><p class="mut">أضف هنا بياناتك وروابط صفحات الشروط وسياسة الخصوصية قبل الإطلاق.</p></div>`}
+</script>
+</body>
+</html>
